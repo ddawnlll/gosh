@@ -161,77 +161,266 @@ fn get_var_int(state: const ShellState&, name: const u8[:], val: i64&) -> bool {
     return false;
 }
 
-// Simple arithmetic evaluator: handles +, -, *, /, %, (, ) and numbers/vars
-recursive fn eval_arith(state: const ShellState&, expr: const u8[:]) -> i64 {
-    var s = trim(expr);
-    if s.len == 0 { return 0; }
+// Arithmetic follows the POSIX precedence ladder, from loose to tight:
+//   ?: | || | && | | | ^ | & | == != | < <= > >= | << >> | + - | * / %
+// with unary + - ! ~ binding tighter than any binary operator. Values are
+// 64-bit two's-complement integers and every operation wraps modulo 2^64.
+// Division truncates toward zero, the remainder takes the dividend's sign,
+// and evaluating / or % with a zero divisor is an error that yields 0.
+// Shift counts are masked to the low six bits.
 
-    // Select the rightmost lowest-precedence binary operator outside groups.
-    // Tracking whether an operand is expected distinguishes unary signs even
-    // when whitespace separates them from the preceding operator.
-    var depth = 0;
-    var split_idx = -1;
-    var op = 0;
-    var precedence = 3;
-    var expect_operand = true;
-    var outer_end = -1;
-    for i in s.len {
-        let c = s[i];
-        if c == ' ' || c == '\t' || c == '\n' || c == '\r' { continue; }
-        if c == '(' {
-            depth++;
-        } else if c == ')' {
-            depth--;
-            if depth < 0 { return 0; }
-            if depth == 0 {
-                if outer_end < 0 { outer_end = i; }
-                expect_operand = false;
-            }
-        } else if depth == 0 {
-            if c == '+' || c == '-' || c == '*' || c == '/' || c == '%' {
-                if !expect_operand {
-                    let current = if c == '+' || c == '-' { 1 } else { 2 };
-                    if current <= precedence {
-                        split_idx = i;
-                        op = c;
-                        precedence = current;
-                    }
-                }
-                expect_operand = true;
-            } else {
-                expect_operand = false;
-            }
+let ARITH_I64_MIN: i64 = -9223372036854775807 - 1;
+
+fn arith_skip_ws(s: const u8[:], pos: i64&) {
+    while pos < s.len && (s[pos] == ' ' || s[pos] == '\t' || s[pos] == '\n' || s[pos] == '\r') {
+        pos++;
+    }
+}
+
+fn arith_starts_with(s: const u8[:], pos: i64, lit: const u8[:]) -> bool {
+    if pos < 0 || pos + lit.len > s.len { return false; }
+    for k in lit.len {
+        if s[pos + k] != lit[k] { return false; }
+    }
+    return true;
+}
+
+// Operator ids, matched longest first so '<<' never becomes two '<'.
+let ARITH_OP_OR = 1;
+let ARITH_OP_AND = 2;
+let ARITH_OP_BOR = 3;
+let ARITH_OP_BXOR = 4;
+let ARITH_OP_BAND = 5;
+let ARITH_OP_EQ = 6;
+let ARITH_OP_NE = 7;
+let ARITH_OP_LE = 8;
+let ARITH_OP_GE = 9;
+let ARITH_OP_LT = 10;
+let ARITH_OP_GT = 11;
+let ARITH_OP_SHL = 12;
+let ARITH_OP_SHR = 13;
+let ARITH_OP_ADD = 14;
+let ARITH_OP_SUB = 15;
+let ARITH_OP_MUL = 16;
+let ARITH_OP_DIV = 17;
+let ARITH_OP_MOD = 18;
+
+fn arith_op_at(s: const u8[:], pos: i64, oplen: i64&) -> i32 {
+    if arith_starts_with(s, pos, "||") { oplen = 2;
+    return ARITH_OP_OR; }
+    if arith_starts_with(s, pos, "&&") { oplen = 2;
+    return ARITH_OP_AND; }
+    if arith_starts_with(s, pos, "==") { oplen = 2;
+    return ARITH_OP_EQ; }
+    if arith_starts_with(s, pos, "!=") { oplen = 2;
+    return ARITH_OP_NE; }
+    if arith_starts_with(s, pos, "<=") { oplen = 2;
+    return ARITH_OP_LE; }
+    if arith_starts_with(s, pos, ">=") { oplen = 2;
+    return ARITH_OP_GE; }
+    if arith_starts_with(s, pos, "<<") { oplen = 2;
+    return ARITH_OP_SHL; }
+    if arith_starts_with(s, pos, ">>") { oplen = 2;
+    return ARITH_OP_SHR; }
+    if arith_starts_with(s, pos, "|") { oplen = 1;
+    return ARITH_OP_BOR; }
+    if arith_starts_with(s, pos, "^") { oplen = 1;
+    return ARITH_OP_BXOR; }
+    if arith_starts_with(s, pos, "&") { oplen = 1;
+    return ARITH_OP_BAND; }
+    if arith_starts_with(s, pos, "<") { oplen = 1;
+    return ARITH_OP_LT; }
+    if arith_starts_with(s, pos, ">") { oplen = 1;
+    return ARITH_OP_GT; }
+    if arith_starts_with(s, pos, "+") { oplen = 1;
+    return ARITH_OP_ADD; }
+    if arith_starts_with(s, pos, "-") { oplen = 1;
+    return ARITH_OP_SUB; }
+    if arith_starts_with(s, pos, "*") { oplen = 1;
+    return ARITH_OP_MUL; }
+    if arith_starts_with(s, pos, "/") { oplen = 1;
+    return ARITH_OP_DIV; }
+    if arith_starts_with(s, pos, "%") { oplen = 1;
+    return ARITH_OP_MOD; }
+    oplen = 0;
+    return 0;
+}
+
+fn arith_prec(id: i32) -> i32 {
+    if id == ARITH_OP_OR { return 1; }
+    if id == ARITH_OP_AND { return 2; }
+    if id == ARITH_OP_BOR { return 3; }
+    if id == ARITH_OP_BXOR { return 4; }
+    if id == ARITH_OP_BAND { return 5; }
+    if id == ARITH_OP_EQ || id == ARITH_OP_NE { return 6; }
+    if id == ARITH_OP_LE || id == ARITH_OP_GE || id == ARITH_OP_LT || id == ARITH_OP_GT { return 7; }
+    if id == ARITH_OP_SHL || id == ARITH_OP_SHR { return 8; }
+    if id == ARITH_OP_ADD || id == ARITH_OP_SUB { return 9; }
+    if id == ARITH_OP_MUL || id == ARITH_OP_DIV || id == ARITH_OP_MOD { return 10; }
+    return 0;
+}
+
+fn arith_wrap_add(a: i64, b: i64) -> i64 { return (a as u64 + b as u64) as i64; }
+fn arith_wrap_sub(a: i64, b: i64) -> i64 { return (a as u64 - b as u64) as i64; }
+fn arith_wrap_mul(a: i64, b: i64) -> i64 { return (a as u64 * b as u64) as i64; }
+fn arith_wrap_neg(a: i64) -> i64 { return (0 - a as u64) as i64; }
+fn arith_wrap_not(a: i64) -> i64 { return (a as u64 ^ 0xffffffffffffffff) as i64; }
+
+fn arith_apply(id: i32, a: i64, b: i64, err: i32&) -> i64 {
+    if id == ARITH_OP_ADD { return arith_wrap_add(a, b); }
+    if id == ARITH_OP_SUB { return arith_wrap_sub(a, b); }
+    if id == ARITH_OP_MUL { return arith_wrap_mul(a, b); }
+    if id == ARITH_OP_DIV {
+        if b == 0 { err = 1; return 0; }
+        // Wrapping the single overflowing quotient keeps the result defined.
+        if a == ARITH_I64_MIN && b == -1 { return ARITH_I64_MIN; }
+        return a / b;
+    }
+    if id == ARITH_OP_MOD {
+        if b == 0 { err = 1; return 0; }
+        if b == -1 { return 0; }
+        // Derive the remainder from truncating division: Goose's `%` is not a
+        // truncating remainder for negative operands.
+        let q = a / b;
+        return arith_wrap_sub(a, arith_wrap_mul(q, b));
+    }
+    if id == ARITH_OP_SHL {
+        return ((a as u64) << ((b & 63) as u32)) as i64;
+    }
+    if id == ARITH_OP_SHR {
+        return a >> ((b & 63) as u32);
+    }
+    if id == ARITH_OP_BAND { return a & b; }
+    if id == ARITH_OP_BOR { return a | b; }
+    if id == ARITH_OP_BXOR { return a ^ b; }
+    if id == ARITH_OP_EQ { return if a == b { 1 } else { 0 }; }
+    if id == ARITH_OP_NE { return if a != b { 1 } else { 0 }; }
+    if id == ARITH_OP_LT { return if a < b { 1 } else { 0 }; }
+    if id == ARITH_OP_LE { return if a <= b { 1 } else { 0 }; }
+    if id == ARITH_OP_GT { return if a > b { 1 } else { 0 }; }
+    if id == ARITH_OP_GE { return if a >= b { 1 } else { 0 }; }
+    if id == ARITH_OP_OR { return if a != 0 || b != 0 { 1 } else { 0 }; }
+    if id == ARITH_OP_AND { return if a != 0 && b != 0 { 1 } else { 0 }; }
+    return 0;
+}
+
+recursive fn arith_binary(state: const ShellState&, s: const u8[:], pos: i64&, min_prec: i32, err: i32&) -> i64 {
+    var left = arith_unary(state, s, pos, err);
+    loop {
+        arith_skip_ws(s, pos);
+        var oplen: i64 = 0;
+        let id = arith_op_at(s, pos, oplen);
+        if id == 0 { break; }
+        let prec = arith_prec(id);
+        if prec < min_prec { break; }
+        pos += oplen;
+        let right = arith_binary(state, s, pos, prec + 1, err);
+        left = arith_apply(id, left, right, err);
+    }
+    return left;
+}
+
+recursive fn arith_unary(state: const ShellState&, s: const u8[:], pos: i64&, err: i32&) -> i64 {
+    arith_skip_ws(s, pos);
+    if pos < s.len {
+        let c = s[pos];
+        if c == '+' { pos++; return arith_unary(state, s, pos, err); }
+        if c == '-' { pos++; return arith_wrap_neg(arith_unary(state, s, pos, err)); }
+        if c == '~' { pos++; return arith_wrap_not(arith_unary(state, s, pos, err)); }
+        if c == '!' {
+            pos++;
+            let v = arith_unary(state, s, pos, err);
+            return if v == 0 { 1 } else { 0 };
         }
     }
-    if depth != 0 { return 0; }
+    return arith_primary(state, s, pos, err);
+}
 
-    if split_idx > 0 {
-        let left = eval_arith(state, s[..split_idx]);
-        let right = eval_arith(state, s[split_idx + 1..]);
-        if op == '+' { return left + right; }
-        if op == '-' { return left - right; }
-        if op == '*' { return left * right; }
-        if op == '/' { return if right != 0 { left / right } else { 0 }; }
-        if op == '%' { return if right != 0 { left % right } else { 0 }; }
+recursive fn arith_primary(state: const ShellState&, s: const u8[:], pos: i64&, err: i32&) -> i64 {
+    arith_skip_ws(s, pos);
+    if pos >= s.len { err = 1; return 0; }
+
+    if s[pos] == '(' {
+        pos++;
+        let v = arith_expr(state, s, pos, err);
+        arith_skip_ws(s, pos);
+        if pos < s.len && s[pos] == ')' { pos++; } else { err = 1; }
+        return v;
     }
 
-    // Remove parentheses only when the first group encloses the whole term.
-    if s[0] == '(' && outer_end == s.len - 1 {
-        return eval_arith(state, s[1..s.len - 1]);
+    if ascii::is_digit(s[pos]) {
+        // Decimal, or hexadecimal when prefixed with 0x/0X. Accumulate in u64 so
+        // a literal beyond the signed range wraps instead of overflowing.
+        var acc: u64 = 0;
+        if s[pos] == '0' && pos + 1 < s.len && (s[pos + 1] == 'x' || s[pos + 1] == 'X') {
+            pos += 2;
+            var digits = 0;
+            while pos < s.len && ascii::hex_value(s[pos]) >= 0 {
+                let d = ascii::hex_value(s[pos]);
+                acc = acc * 16 + d as u64;
+                pos++;
+                digits++;
+            }
+            if digits == 0 { err = 1; return 0; }
+        } else {
+            while pos < s.len && ascii::is_digit(s[pos]) {
+                acc = acc * 10 + (s[pos] - '0');
+                pos++;
+            }
+        }
+        return acc as i64;
     }
-    if s[0] == '-' { return -eval_arith(state, s[1..]); }
-    if s[0] == '+' { return eval_arith(state, s[1..]); }
 
-    // Single term: number or variable name
-    if ascii::is_digit(s[0]) || (s[0] == '-' && s.len > 1 && ascii::is_digit(s[1])) {
-        let num, ok = parse_int(s);
-        if ok { return num; }
-    } else {
+    if ascii::is_alpha(s[pos]) || s[pos] == '_' {
+        let start = pos;
+        while pos < s.len && (ascii::is_alnum(s[pos]) || s[pos] == '_') { pos++; }
         var v: i64 = 0;
-        if get_var_int(state, s, v) { return v; }
+        if get_var_int(state, s[start..pos], v) { return v; }
+        // Unset variables evaluate to 0, matching shell arithmetic.
+        return 0;
     }
 
+    err = 1;
     return 0;
+}
+
+recursive fn arith_expr(state: const ShellState&, s: const u8[:], pos: i64&, err: i32&) -> i64 {
+    let cond = arith_binary(state, s, pos, 1, err);
+    arith_skip_ws(s, pos);
+    if pos < s.len && s[pos] == '?' {
+        pos++;
+        // Parse both arms to advance the cursor, but only the selected arm's
+        // errors count so the unused arm cannot fail the expansion.
+        var then_err: i32 = 0;
+        let then_val = arith_expr(state, s, pos, then_err);
+        arith_skip_ws(s, pos);
+        var else_err: i32 = 0;
+        var else_val: i64 = 0;
+        if pos < s.len && s[pos] == ':' {
+            pos++;
+            else_val = arith_expr(state, s, pos, else_err);
+        } else {
+            else_err = 1;
+        }
+        if cond != 0 {
+            if then_err != 0 { err = then_err; }
+            return then_val;
+        }
+        if else_err != 0 { err = else_err; }
+        return else_val;
+    }
+    return cond;
+}
+
+fn eval_arith(state: const ShellState&, expr: const u8[:]) -> i64 {
+    var s = trim(expr);
+    if s.len == 0 { return 0; }
+    var pos: i64 = 0;
+    var err: i32 = 0;
+    let v = arith_expr(state, s, pos, err);
+    arith_skip_ws(s, pos);
+    if err != 0 || pos != s.len { return 0; }
+    return v;
 }
 
 // Find the closing pair after all arithmetic grouping parentheses are closed.

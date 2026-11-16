@@ -225,7 +225,7 @@ jobs
 - **Quoting Semantics**:
   - Single quotes (`'...'`): Preserve all characters verbatim (disables parameter and glob expansions).
   - Double quotes (`"..."`): Interpolate variables, command substitutions, and arithmetic while disabling globbing.
-- **Arithmetic Expansion**: `$(( expr ))` with `+`, `-`, `*`, `/`, `%`, and parenthesized sub-expressions.
+- **Arithmetic Expansion**: `$(( expr ))` with the full operator ladder: `?:`, `||`, `&&`, `|`, `^`, `&`, `==`/`!=`, `<`/`<=`/`>`/`>=`, `<<`/`>>`, `+`/`-`, `*`/`/`/`%`, unary `+`/`-`/`!`/`~`, parentheses, integer variables, and decimal or `0x` hexadecimal literals. Arithmetic is 64-bit two's-complement: results wrap on overflow, division truncates toward zero, the remainder takes the dividend's sign, shift counts are masked to six bits, and division or remainder by zero evaluates to 0. The unused arm of `?:` is not evaluated.
 - **Command Substitution**: `$(command)` and `` `command` `` capturing output from subshells.
 - **Filesystem Globbing**: Component-wise path matching for `*` and `?`, including literal relative/absolute directory prefixes. Hidden names require a component starting with `.`; unmatched patterns stay literal. Matches use bytewise C-locale ordering regardless of locale settings. Expansion fails with status 2 rather than truncating when it exceeds 16 total arguments, a 128-byte matched path, or an 8192-byte directory listing. Recursive `**` and bracket patterns are not supported.
 - **Tilde Expansion**: `~` and `~/path` expanding to user `$HOME`.
@@ -316,7 +316,7 @@ GOSH is under active development. The current release is focused on core POSIX s
 - **POSIX Coverage**: GOSH implements a large subset of POSIX shell semantics, but is not yet fully POSIX.1-2017 compliant.
 - **Here-Documents (`<<EOF`)**: Not yet implemented; planned for the upcoming release.
 - **Case Statements (`case ... in ... esac`)**: Not yet implemented; `if/elif/else` should be used instead.
-- **Arithmetic Operators**: Arithmetic expansion supports standard arithmetic (`+`, `-`, `*`, `/`, `%`) and parentheses, but does not currently support bitwise or ternary operators.
+- **Arithmetic Operators**: Arithmetic expansion implements the POSIX precedence ladder, including bitwise, comparison, logical, and ternary operators. Constants are decimal or `0x` hexadecimal; C-style octal literals and floating-point arithmetic are not supported.
 - **Terminal Raw Mode**: The interactive line editor relies on standard ANSI/VT100 escape codes; dumb terminals or non-standard terminal emulators may experience reduced formatting capabilities.
 
 ---
@@ -333,7 +333,7 @@ GOSH is under active development. The current release is focused on core POSIX s
 - [x] Background job management (`&`, `jobs`, `fg`, `bg`)
 - [ ] Here-documents (`<<EOF`) and here-strings (`<<<`)
 - [ ] `case ... esac` statement parsing and pattern execution
-- [ ] Extend arithmetic expansion with bitwise and ternary operators, with explicit overflow and division semantics
+- [x] Extend arithmetic expansion with bitwise and ternary operators, with explicit overflow and division semantics
 - [ ] Recursive globbing (`**/*.ext`)
 - [ ] Programmable user-defined completion functions
 - [x] Interactive user configuration file loading (`~/.goshrc`)
