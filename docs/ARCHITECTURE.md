@@ -62,6 +62,7 @@ GOSH compiles directly into a standalone ELF binary via the Goose toolchain (`go
   - `STMT_WHILE`: `while COND; do BODY; done`.
   - `STMT_FOR`: `for VAR in WORDS; do BODY; done`.
   - `STMT_FUNC`: `name() { ... }` or `function name { ... }`.
+  - `STMT_CASE`: `case WORD in PATTERN[|PATTERN]...) BODY;; ... esac`. Patterns are stored as one '|'-joined list per item; the subject word lives in `cond_text`. Pattern matching expands the pattern words (quotes removed) and matches bytewise glob patterns, so `*`, `?`, and quoted literals behave as in pathname expansion.
 - Redirection association: Redirections can be attached both to individual pipeline commands and to compound statements (`( ... ) > file`, `for ... done > file`).
 
 ### 2.3 Expansion Engine (`src/expansion.goose`)

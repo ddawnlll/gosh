@@ -33,6 +33,8 @@ let TOKEN_IN = 28;
 let TOKEN_DO = 29;
 let TOKEN_DONE = 30;
 let TOKEN_FUNCTION = 31;
+let TOKEN_CASE = 32;
+let TOKEN_ESAC = 33;
 
 struct Token {
     kind: i32 = 0,
@@ -74,6 +76,7 @@ let STMT_WHILE = 3;
 let STMT_FOR = 4;
 let STMT_FUNC = 5;
 let STMT_SUBSHELL = 6;
+let STMT_CASE = 7;
 
 struct Statement {
     kind: i32 = STMT_PIPELINE,
@@ -89,6 +92,12 @@ struct Statement {
 
     func_name: u8[..32] = [],
     func_body: u8[..512] = [],
+
+    // case statements: the subject word lives in cond_text, and each item adds
+    // one joined pattern list (alternatives separated by '|') and one body.
+    case_patterns: u8[..128][..8] = [],
+    case_bodies: u8[..512][..8] = [],
+    case_count: i32 = 0,
 
     redirs: Redirection[..4] = [],
     op_after: i32 = OP_NONE,

@@ -33,7 +33,7 @@ GOSH compiles into a native ELF binary using the Goose toolchain. It aims to com
   - Redirections apply to external commands, builtins, subshells, and compound loop/conditional statements.
 - **Subshell Isolation**: Grouped commands in `( ... )` run in a dedicated forked subshell process, isolating working directory changes and variable mutations from the parent shell.
 - **Command & Arithmetic Substitutions**: Full nested command capture (`$(...)` and `` `...` ``) and arithmetic expression evaluation (`$(( ... ))`).
-- **Control Flow & Compound Commands**: Standard `if/then/elif/else/fi`, `while/do/done`, and `for/in/do/done` loops. `while` conditions and loop bodies are parsed once and their statement trees are reused across iterations, avoiding repeated lexing and parsing.
+- **Control Flow & Compound Commands**: Standard `if/then/elif/else/fi`, `while/do/done`, `for/in/do/done` loops, and `case ... in ... esac` statements with `|` alternatives, glob patterns, and a `*` default item. `while` conditions and loop bodies are parsed once and their statement trees are reused across iterations, avoiding repeated lexing and parsing.
 - **Shell Functions & Aliases**: User-defined functions with positional parameter arguments (`$1`, `$2`, `$#`) and command aliases.
 - **Process Management & Job Control**: Background process spawning (`cmd &`), active job tracking (`jobs`), and foreground/background job resumption (`fg`, `bg`).
 - **Interactive Line Editor**:
@@ -315,7 +315,6 @@ GOSH is under active development. The current release is focused on core POSIX s
 
 - **POSIX Coverage**: GOSH implements a large subset of POSIX shell semantics, but is not yet fully POSIX.1-2017 compliant.
 - **Here-Documents (`<<EOF`)**: Not yet implemented; planned for the upcoming release.
-- **Case Statements (`case ... in ... esac`)**: Not yet implemented; `if/elif/else` should be used instead.
 - **Arithmetic Operators**: Arithmetic expansion supports standard arithmetic (`+`, `-`, `*`, `/`, `%`) and parentheses, but does not currently support bitwise or ternary operators.
 - **Terminal Raw Mode**: The interactive line editor relies on standard ANSI/VT100 escape codes; dumb terminals or non-standard terminal emulators may experience reduced formatting capabilities.
 
@@ -332,7 +331,7 @@ GOSH is under active development. The current release is focused on core POSIX s
 - [x] Interactive line editor with syntax highlighting and autosuggestions
 - [x] Background job management (`&`, `jobs`, `fg`, `bg`)
 - [ ] Here-documents (`<<EOF`) and here-strings (`<<<`)
-- [ ] `case ... esac` statement parsing and pattern execution
+- [x] `case ... esac` statement parsing and pattern execution
 - [ ] Extend arithmetic expansion with bitwise and ternary operators, with explicit overflow and division semantics
 - [ ] Recursive globbing (`**/*.ext`)
 - [ ] Programmable user-defined completion functions
