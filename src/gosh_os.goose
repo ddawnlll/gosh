@@ -28,6 +28,7 @@ extern fn gosh_exec_packed(
     err_file: const u8[:],
     append_err: i32,
     redirect_err_to_out: i32,
+    in_data: const u8[:],
     background: i32,
     child_pid: i32&
 ) -> i32;
@@ -70,6 +71,7 @@ extern fn gosh_exit(code: i32);
 extern fn gosh_open_file(path: const u8[:], mode: i32) -> i32;
 extern fn gosh_execvp_packed(packed_args: const u8[:], argc: i32) -> i32;
 extern fn gosh_read_fd(fd: i32, out: u8[:]) -> i32;
+extern fn gosh_write_fd(fd: i32, data: const u8[:]) -> i32;
 
 extern fn gosh_kill(pid: i32, sig: i32) -> i32;
 extern fn gosh_setpgid(pid: i32, pgid: i32) -> i32;

@@ -32,6 +32,7 @@ GOSH compiles into a native ELF binary using the Goose toolchain. It aims to com
   - Merged descriptors: `2>&1`, `&>`
   - Redirections apply to external commands, builtins, subshells, and compound loop/conditional statements.
 - **Subshell Isolation**: Grouped commands in `( ... )` run in a dedicated forked subshell process, isolating working directory changes and variable mutations from the parent shell.
+- **Here-Documents & Here-Strings**: Multi-line stdin bodies (`<<EOF`), quoted delimiters that disable expansion (`<<'EOF'`), and `<<< word` here-strings. They feed external commands, builtins, functions, pipeline stages, and compound-statement redirections.
 - **Command & Arithmetic Substitutions**: Full nested command capture (`$(...)` and `` `...` ``) and arithmetic expression evaluation (`$(( ... ))`).
 - **Control Flow & Compound Commands**: Standard `if/then/elif/else/fi`, `while/do/done`, `for/in/do/done` loops, and `case ... in ... esac` statements with `|` alternatives, glob patterns, and a `*` default item. `while` conditions and loop bodies are parsed once and their statement trees are reused across iterations, avoiding repeated lexing and parsing.
 - **Shell Functions & Aliases**: User-defined functions with positional parameter arguments (`$1`, `$2`, `$#`) and command aliases.
@@ -314,7 +315,7 @@ The suite's output reports the actual pass/fail totals for the build being teste
 GOSH is under active development. The current release is focused on core POSIX shell functionality and interactive productivity.
 
 - **POSIX Coverage**: GOSH implements a large subset of POSIX shell semantics, but is not yet fully POSIX.1-2017 compliant.
-- **Here-Documents (`<<EOF`)**: Not yet implemented; planned for the upcoming release.
+- **Here-Documents (`<<EOF`)**: Bodies are limited to 512 bytes, at most four per command line, and are supported for top-level commands, pipelines, functions, and compound-statement redirections. A here-document *inside* an `if`/`for`/`while`/function/subshell body is rejected with a syntax error, and tab-stripping `<<-` is not supported.
 - **Arithmetic Operators**: Arithmetic expansion implements the POSIX precedence ladder, including bitwise, comparison, logical, and ternary operators. Constants are decimal or `0x` hexadecimal; C-style octal literals and floating-point arithmetic are not supported.
 - **Terminal Raw Mode**: The interactive line editor relies on standard ANSI/VT100 escape codes; dumb terminals or non-standard terminal emulators may experience reduced formatting capabilities.
 
@@ -330,7 +331,7 @@ GOSH is under active development. The current release is focused on core POSIX s
 - [x] Parameter expansions (`${VAR:-default}`, `${#VAR}`, special variables)
 - [x] Interactive line editor with syntax highlighting and autosuggestions
 - [x] Background job management (`&`, `jobs`, `fg`, `bg`)
-- [ ] Here-documents (`<<EOF`) and here-strings (`<<<`)
+- [x] Here-documents (`<<EOF`) and here-strings (`<<<`)
 - [x] `case ... esac` statement parsing and pattern execution
 - [x] Extend arithmetic expansion with bitwise and ternary operators, with explicit overflow and division semantics
 - [ ] Recursive globbing (`**/*.ext`)

@@ -5,7 +5,22 @@ fn is_redir_token(kind: i32) -> bool {
     kind == TOKEN_REDIR_IN || kind == TOKEN_REDIR_OUT ||
     kind == TOKEN_REDIR_APP || kind == TOKEN_REDIR_ERR ||
     kind == TOKEN_REDIR_ERR_APP || kind == TOKEN_REDIR_BOTH ||
-    kind == TOKEN_REDIR_E2O
+    kind == TOKEN_REDIR_E2O || kind == TOKEN_REDIR_HEREDOC ||
+    kind == TOKEN_REDIR_HERESTR
+}
+
+// Copy a here-document body from the lexer table into the redirection. Bodies
+// are stored in source order, which is also the redirection token order.
+fn attach_heredoc(r: Redirection&, heredocs: const Heredoc[..4]&, idx: i32&) -> bool {
+    if r.kind != TOKEN_REDIR_HEREDOC { return true; }
+    if idx < 0 || idx >= heredocs.len as i32 {
+        print("gosh: syntax error: missing here-document body");
+        return false;
+    }
+    format(r.body, heredocs[idx as i64].body);
+    r.quoted = heredocs[idx as i64].quoted;
+    idx++;
+    return true;
 }
 
 // Bodies remain shell text for the executor. Walk the grammar before copying
@@ -57,6 +72,10 @@ recursive fn collect_control_text(tokens: const Token[..64]&, pos: i32&, stop1: 
         let kind = tokens[pos].kind;
         if (command_start || kind == TOKEN_RPAREN || kind == TOKEN_RBRACE) &&
            (kind == stop1 || kind == stop2 || kind == stop3) { break; }
+        if kind == TOKEN_REDIR_HEREDOC {
+            format(error, "here-documents are not supported in compound commands");
+            return false;
+        }
         if kind == TOKEN_SEMI || kind == TOKEN_NEWLINE || kind == TOKEN_AND || kind == TOKEN_OR || kind == TOKEN_PIPE || kind == TOKEN_AMP {
             command_start = true;
             pos++;
@@ -241,6 +260,10 @@ fn collect_case_body(tokens: const Token[..64]&, pos: i32&, out: u8[..512]&, err
             nested_case--;
         }
         if command_start && kind == TOKEN_CASE { nested_case++; }
+        if kind == TOKEN_REDIR_HEREDOC {
+            format(error, "here-documents are not supported in compound commands");
+            return -1;
+        }
         if kind == TOKEN_NEWLINE || kind == TOKEN_SEMI {
             if out.len + 2 > 512 {
                 print("gosh: input capacity exceeded: compound text bytes (maximum 512)");
@@ -329,9 +352,10 @@ fn parse_case(tokens: const Token[..64]&, pos: i32&, stmt: Statement&, error: u8
     return true;
 }
 
-fn parse_statements(tokens: const Token[..64]&, stmts: Statement[..8]&, error: u8[..256]&) -> bool {
+fn parse_statements(tokens: const Token[..64]&, stmts: Statement[..8]&, heredocs: const Heredoc[..4]&, error: u8[..256]&) -> bool {
     stmts.clear();
     var pos: i32 = 0;
+    var heredoc_idx: i32 = 0;
     let n = tokens.len;
 
     while pos < n {
@@ -355,6 +379,7 @@ fn parse_statements(tokens: const Token[..64]&, stmts: Statement[..8]&, error: u
                 var r = Redirection { kind: tokens[pos].kind };
                 pos++;
                 if pos < n && tokens[pos].kind == TOKEN_WORD { format(r.target, tokens[pos].text); pos++; }
+                if !attach_heredoc(r, heredocs, heredoc_idx) { return false; }
                 if stmt.redirs.len >= 4 {
                     print("gosh: input capacity exceeded: redirections (maximum 4)");
                     return false;
@@ -371,6 +396,7 @@ fn parse_statements(tokens: const Token[..64]&, stmts: Statement[..8]&, error: u
                 var r = Redirection { kind: tokens[pos].kind };
                 pos++;
                 if pos < n && tokens[pos].kind == TOKEN_WORD { format(r.target, tokens[pos].text); pos++; }
+                if !attach_heredoc(r, heredocs, heredoc_idx) { return false; }
                 if stmt.redirs.len >= 4 {
                     print("gosh: input capacity exceeded: redirections (maximum 4)");
                     return false;
@@ -413,6 +439,10 @@ fn parse_statements(tokens: const Token[..64]&, stmts: Statement[..8]&, error: u
                 pos++;
                 var depth = 1;
                 while pos < n && depth > 0 && tokens[pos].kind != TOKEN_EOF {
+                    if tokens[pos].kind == TOKEN_REDIR_HEREDOC {
+                        format(error, "here-documents are not supported in compound commands");
+                        return false;
+                    }
                     if tokens[pos].kind == TOKEN_LBRACE { depth++; }
                     else if tokens[pos].kind == TOKEN_RBRACE {
                         depth--;
@@ -456,6 +486,10 @@ fn parse_statements(tokens: const Token[..64]&, stmts: Statement[..8]&, error: u
             var stmt = Statement { kind: STMT_SUBSHELL };
             var depth = 1;
             while pos < n && depth > 0 && tokens[pos].kind != TOKEN_EOF {
+                if tokens[pos].kind == TOKEN_REDIR_HEREDOC {
+                    format(error, "here-documents are not supported in compound commands");
+                    return false;
+                }
                 if tokens[pos].kind == TOKEN_LPAREN {
                     depth++;
                 } else if tokens[pos].kind == TOKEN_RPAREN {
@@ -493,6 +527,7 @@ fn parse_statements(tokens: const Token[..64]&, stmts: Statement[..8]&, error: u
                 var r = Redirection { kind: tokens[pos].kind };
                 pos++;
                 if pos < n && tokens[pos].kind == TOKEN_WORD { format(r.target, tokens[pos].text); pos++; }
+                if !attach_heredoc(r, heredocs, heredoc_idx) { return false; }
                 if stmt.redirs.len >= 4 {
                     print("gosh: input capacity exceeded: redirections (maximum 4)");
                     return false;
@@ -549,6 +584,7 @@ fn parse_statements(tokens: const Token[..64]&, stmts: Statement[..8]&, error: u
                     format(r.target, tokens[pos].text);
                     pos++;
                 }
+                if !attach_heredoc(r, heredocs, heredoc_idx) { return false; }
                 if current_cmd.redirs.len >= 4 {
                     print("gosh: input capacity exceeded: redirections (maximum 4)");
                     return false;

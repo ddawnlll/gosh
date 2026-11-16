@@ -769,6 +769,106 @@ fn expand_word(state: const ShellState&, word: const u8[:], out: u8[..128]&) {
     }
 }
 
+// Return the exclusive end of a `$` construct starting at i, or i when the
+// byte does not begin a supported expansion.
+fn heredoc_dollar_end(body: const u8[:], i: i64) -> i64 {
+    if i + 1 >= body.len { return i; }
+    let next = body[i + 1];
+    if next == '{' {
+        var j = i + 2;
+        while j < body.len {
+            if body[j] == '}' { return j + 1; }
+            j++;
+        }
+        return i;
+    }
+    if next == '(' {
+        if i + 2 < body.len && body[i + 2] == '(' {
+            let end = arithmetic_end(body, i + 3);
+            if end >= 0 { return end + 2; }
+            return i;
+        }
+        var depth = 1;
+        var j = i + 2;
+        while j < body.len {
+            if body[j] == '(' { depth++; }
+            else if body[j] == ')' {
+                depth--;
+                if depth == 0 { return j + 1; }
+            }
+            j++;
+        }
+        return i;
+    }
+    if next == '?' || next == '$' || next == '!' || next == '#' || ascii::is_digit(next) { return i + 2; }
+    if ascii::is_alpha(next) || next == '_' {
+        var j = i + 2;
+        while j < body.len && (ascii::is_alnum(body[j]) || body[j] == '_') { j++; }
+        return j;
+    }
+    return i;
+}
+
+// Expand a here-document body. Quotes are literal here, so unlike expand_word
+// only `$` and backticks expand, and a backslash escapes just '$', '`', '\\',
+// and newline. The result may span multiple lines and is bounded by `out`.
+fn expand_heredoc_body(state: const ShellState&, body: const u8[:], out: u8[..512]&) -> bool {
+    var i = 0;
+    while i < body.len {
+        let c = body[i];
+
+        if c == '\\' && i + 1 < body.len {
+            let next = body[i + 1];
+            if next == '$' || next == '`' || next == '\\' {
+                if out.len + 1 > 512 { return false; }
+                out.push(next);
+                i += 2;
+                continue;
+            }
+            if next == '\n' {
+                i += 2;
+                continue;
+            }
+            if out.len + 1 > 512 { return false; }
+            out.push(c);
+            i++;
+            continue;
+        }
+
+        var end: i64 = i;
+        if c == '$' {
+            end = heredoc_dollar_end(body, i);
+        } else if c == '`' {
+            var j = i + 1;
+            while j < body.len {
+                if body[j] == '`' { end = j + 1; break; }
+                j++;
+            }
+        }
+        if end > i {
+            if end - i > 128 {
+                if out.len + 1 > 512 { return false; }
+                out.push(c);
+                i++;
+                continue;
+            }
+            var piece: u8[..128] = [];
+            format(piece, body[i..end]);
+            var exp: u8[..128] = [];
+            expand_word(state, piece, exp);
+            if out.len + exp.len > 512 { return false; }
+            format(out, exp);
+            i = end;
+            continue;
+        }
+
+        if out.len + 1 > 512 { return false; }
+        out.push(c);
+        i++;
+    }
+    return true;
+}
+
 // Bytewise ordering (LC_ALL=C), independent of the process locale.
 fn glob_less(a: const u8[:], b: const u8[:]) -> bool {
     var i = 0;

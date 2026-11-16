@@ -47,7 +47,7 @@ recursive fn dispatch_builtin(state: ShellState&, cmd: const u8[:], args: const 
             packed.push(0);
         }
         var dummy_pid: i32 = 0;
-        return gosh_exec_packed(packed, sub_args.len as i32, "", "", 0, "", 0, 0, 0, dummy_pid);
+        return gosh_exec_packed(packed, sub_args.len as i32, "", "", 0, "", 0, 0, "", 0, dummy_pid);
     }
     if cmd == "help" { return builtin_help(); }
     if cmd == "exit" {
@@ -61,11 +61,56 @@ recursive fn dispatch_builtin(state: ShellState&, cmd: const u8[:], args: const 
     return 1;
 }
 
+// Build the stdin payload for a here-document or here-string. Quoted delimiters
+// keep the body literal; unquoted bodies expand parameters and substitutions.
+fn heredoc_content(state: const ShellState&, r: const Redirection&, out: u8[..512]&) -> bool {
+    out.clear();
+    if r.kind == TOKEN_REDIR_HERESTR {
+        var exp: u8[..128] = [];
+        expand_word(state, r.target, exp);
+        if exp.len + 1 > 512 { return false; }
+        format(out, exp);
+        out.push('\n');
+        return true;
+    }
+    if r.quoted {
+        format(out, r.body);
+        return true;
+    }
+    return expand_heredoc_body(state, r.body, out);
+}
+
+// Replace the current stdin with a pipe carrying `data`. Bodies are bounded by
+// the parse capacities, so writing before the reader starts cannot deadlock.
+fn feed_stdin(data: const u8[:]) -> bool {
+    var p: i32[2] = [-1, -1];
+    if gosh_pipe(p[0]) != 0 { return false; }
+    if gosh_write_fd(p[1], data) != 0 {
+        gosh_close(p[0]);
+        gosh_close(p[1]);
+        return false;
+    }
+    gosh_close(p[1]);
+    let res = gosh_dup2(p[0], 0);
+    gosh_close(p[0]);
+    return res >= 0;
+}
+
 // Apply redirections in source order; callers in the parent must save/restore stdio.
 fn apply_redirections(state: ShellState&, redirs: const Redirection[..4]&) -> bool {
     for r in redirs {
         var exp_target: u8[..128] = [];
         expand_word(state, r.target, exp_target);
+
+        if r.kind == TOKEN_REDIR_HEREDOC || r.kind == TOKEN_REDIR_HERESTR {
+            var data: u8[..512] = [];
+            if !heredoc_content(state, r, data) {
+                print("gosh: here-document exceeds capacity");
+                return false;
+            }
+            if !feed_stdin(data) { return false; }
+            continue;
+        }
 
         if r.kind == TOKEN_REDIR_E2O {
             if gosh_dup2(1, 2) < 0 { return false; }
@@ -238,6 +283,7 @@ recursive fn execute_single_cmd(state: ShellState&, raw_cmd: const Command&) -> 
 
     // 6. External command execution
     var in_file: u8[..256] = [];
+    var in_data: u8[..512] = [];
     var out_file: u8[..256] = [];
     var append_out: i32 = 0;
     var err_file: u8[..256] = [];
@@ -251,6 +297,14 @@ recursive fn execute_single_cmd(state: ShellState&, raw_cmd: const Command&) -> 
         if r.kind == TOKEN_REDIR_IN {
             in_file.clear();
             format(in_file, exp_target);
+            in_data.clear();
+        } else if r.kind == TOKEN_REDIR_HEREDOC || r.kind == TOKEN_REDIR_HERESTR {
+            in_data.clear();
+            if !heredoc_content(state, r, in_data) {
+                print("gosh: here-document exceeds capacity");
+                return 1;
+            }
+            in_file.clear();
         } else if r.kind == TOKEN_REDIR_OUT {
             out_file.clear();
             format(out_file, exp_target);
@@ -293,6 +347,7 @@ recursive fn execute_single_cmd(state: ShellState&, raw_cmd: const Command&) -> 
         err_file,
         append_err,
         redirect_err_to_out,
+        in_data,
         if raw_cmd.background { 1 } else { 0 },
         child_pid
     );
@@ -458,13 +513,14 @@ recursive fn execute_compound_statement(state: ShellState&, stmt: const Statemen
     if stmt.kind == STMT_WHILE {
         if stmt.cond_text.len == 0 { return 0; }
         var cond_tokens: Token[..64] = [];
-        if tokenize_line(stmt.cond_text, cond_tokens) < 0 {
+        var cond_heredocs: Heredoc[..4] = [];
+        if tokenize_line(stmt.cond_text, cond_tokens, cond_heredocs) < 0 {
             state.last_status = 2;
             return 2;
         }
         var cond_stmts: Statement[..8] = [];
         var parse_error: u8[..256] = [];
-        if !parse_statements(cond_tokens, cond_stmts, parse_error) {
+        if !parse_statements(cond_tokens, cond_stmts, cond_heredocs, parse_error) {
             if parse_error.len > 0 { print("gosh: syntax error: ", parse_error); }
             state.last_status = 2;
             return 2;
@@ -473,11 +529,12 @@ recursive fn execute_compound_statement(state: ShellState&, stmt: const Statemen
         var body_stmts: Statement[..8] = [];
         if stmt.body_text.len > 0 {
             var body_tokens: Token[..64] = [];
-            if tokenize_line(stmt.body_text, body_tokens) < 0 {
+            var body_heredocs: Heredoc[..4] = [];
+            if tokenize_line(stmt.body_text, body_tokens, body_heredocs) < 0 {
                 state.last_status = 2;
                 return 2;
             }
-            if !parse_statements(body_tokens, body_stmts, parse_error) {
+            if !parse_statements(body_tokens, body_stmts, body_heredocs, parse_error) {
                 if parse_error.len > 0 { print("gosh: syntax error: ", parse_error); }
                 state.last_status = 2;
                 return 2;
@@ -500,12 +557,13 @@ recursive fn execute_compound_statement(state: ShellState&, stmt: const Statemen
         var body_stmts: Statement[..8] = [];
         if stmt.body_text.len > 0 {
             var body_tokens: Token[..64] = [];
-            if tokenize_line(stmt.body_text, body_tokens) < 0 {
+            var body_heredocs: Heredoc[..4] = [];
+            if tokenize_line(stmt.body_text, body_tokens, body_heredocs) < 0 {
                 state.last_status = 2;
                 return 2;
             }
             var parse_error: u8[..256] = [];
-            if !parse_statements(body_tokens, body_stmts, parse_error) {
+            if !parse_statements(body_tokens, body_stmts, body_heredocs, parse_error) {
                 if parse_error.len > 0 { print("gosh: syntax error: ", parse_error); }
                 state.last_status = 2;
                 return 2;
@@ -632,14 +690,15 @@ recursive fn execute_script(state: ShellState&, script_text: const u8[:]) -> i32
     if script_text.len == 0 { return state.last_status; }
 
     var tokens: Token[..64] = [];
-    if tokenize_line(script_text, tokens) < 0 {
+    var heredocs: Heredoc[..4] = [];
+    if tokenize_line(script_text, tokens, heredocs) < 0 {
         state.last_status = 2;
         return 2;
     }
 
     var stmts: Statement[..8] = [];
     var parse_error: u8[..256] = [];
-    if !parse_statements(tokens, stmts, parse_error) {
+    if !parse_statements(tokens, stmts, heredocs, parse_error) {
         if parse_error.len > 0 {
             print("gosh: syntax error: ", parse_error);
         }
