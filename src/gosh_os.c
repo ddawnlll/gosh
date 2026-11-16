@@ -238,6 +238,7 @@ int32_t gosh_exec_packed(
     gosh_slice_u8 err_file,
     int32_t append_err,
     int32_t redirect_err_to_out,
+    gosh_slice_u8 in_data,
     int32_t background,
     int32_t *child_pid
 ) {
@@ -288,6 +289,22 @@ int32_t gosh_exec_packed(
             }
             dup2(fd, STDIN_FILENO);
             close(fd);
+        }
+
+        /* Here-document/here-string payload wins over a path-based '<'. */
+        if (in_data.data && in_data.len > 0) {
+            int hp[2];
+            if (pipe(hp) == 0) {
+                if (dup2(hp[0], STDIN_FILENO) < 0) {
+                    _exit(1);
+                }
+                close(hp[0]);
+                if (gosh_write_fd(hp[1], in_data) != 0) {
+                    close(hp[1]);
+                    _exit(1);
+                }
+                close(hp[1]);
+            }
         }
 
         if (out_buf[0]) {
@@ -370,10 +387,12 @@ int32_t gosh_run_pipeline_packed(
     if (num_cmds <= 0) return 0;
     if (num_cmds == 1) {
         int32_t child_pid = 0;
+        gosh_slice_u8 empty = {0};
         return gosh_exec_packed(
             packed_args, cmd_argcs[0],
             in_file, out_file, append_out,
             err_file, append_err, redirect_err_to_out,
+            empty,
             background, &child_pid
         );
     }
@@ -745,6 +764,21 @@ int32_t gosh_execvp_packed(gosh_slice_u8 packed_args, int32_t argc) {
     int err = (errno == ENOENT ? 127 : 126);
     free(c_argv);
     return err;
+}
+
+int32_t gosh_write_fd(int32_t fd, gosh_slice_u8 data) {
+    if (fd < 0) return -1;
+    int64_t off = 0;
+    while (off < data.len) {
+        ssize_t n = write(fd, data.data + off, (size_t)(data.len - off));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1;
+        off += n;
+    }
+    return 0;
 }
 
 int32_t gosh_read_fd(int32_t fd, gosh_mut_slice_u8 out) {

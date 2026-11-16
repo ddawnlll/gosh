@@ -52,6 +52,7 @@ int32_t gosh_exec_packed(
     gosh_slice_u8 err_file,
     int32_t append_err,
     int32_t redirect_err_to_out,
+    gosh_slice_u8 in_data,
     int32_t background,
     int32_t *child_pid
 );
@@ -102,6 +103,7 @@ void gosh_exit(int32_t code);
 int32_t gosh_open_file(gosh_slice_u8 path, int32_t mode);
 int32_t gosh_execvp_packed(gosh_slice_u8 packed_args, int32_t argc);
 int32_t gosh_read_fd(int32_t fd, gosh_mut_slice_u8 out);
+int32_t gosh_write_fd(int32_t fd, gosh_slice_u8 data);
 
 /* Job control and process group primitives */
 int32_t gosh_kill(int32_t pid, int32_t sig);

@@ -49,6 +49,7 @@ GOSH compiles directly into a standalone ELF binary via the Goose toolchain (`go
 - Converts raw input text into a sequence of typed tokens (`Token` struct).
 - Operators: `|`, `&&`, `||`, `;`, `&`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`, `&>`, `(`, `)`.
 - Keywords: `if`, `then`, `elif`, `else`, `fi`, `while`, `until`, `for`, `in`, `do`, `done`, `function`.
+- Here-documents: `<<` captures the delimiter, consumes the body after the command line's newline, and records up to four bodies per parse in a `Heredoc` table. `<<<` is a here-string. Quoted delimiters mark the body literal.
 - Quoting preserving tokenizer:
   - Single quotes (`'...'`): preserved as tokens so expansion engine treats content verbatim without parameter or glob expansion.
   - Double quotes (`"..."`): preserved so parameter and command substitutions occur while inhibiting globbing.
@@ -62,7 +63,7 @@ GOSH compiles directly into a standalone ELF binary via the Goose toolchain (`go
   - `STMT_WHILE`: `while COND; do BODY; done`.
   - `STMT_FOR`: `for VAR in WORDS; do BODY; done`.
   - `STMT_FUNC`: `name() { ... }` or `function name { ... }`.
-- Redirection association: Redirections can be attached both to individual pipeline commands and to compound statements (`( ... ) > file`, `for ... done > file`).
+- Redirection association: Redirections can be attached both to individual pipeline commands and to compound statements (`( ... ) > file`, `for ... done > file`). Here-document bodies are copied from the lexer table into each `Redirection` while parsing, so execution needs no side table. Here-documents inside collected compound bodies are rejected.
 
 ### 2.3 Expansion Engine (`src/expansion.goose`)
 - **Variable Expansion**: `$VAR`, `${VAR}`.

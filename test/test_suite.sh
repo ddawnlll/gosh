@@ -120,6 +120,68 @@ line2"
 run_test "redirect stderr 2>" "sh -c 'echo error >&2; exit 1' 2> \"\$TMP_ERR\" || cat \"\$TMP_ERR\"" "error"
 run_test "redirect 2>&1" "sh -c 'echo error >&2; exit 1' 2>&1 | grep error" "error"
 
+# Here-documents and here-strings.
+run_test "here-string" 'cat <<< hello' "hello"
+run_test "here-string expands variables" 'x=world; cat <<< "hello $x"' "hello world"
+run_test "here-document literal body" 'cat <<EOF
+alpha
+beta
+EOF' "alpha
+beta"
+run_test "here-document expands variables" 'x=value; cat <<EOF
+got $x
+EOF' "got value"
+run_test "here-document quoted delimiter stays literal" "cat <<'EOF'
+\$x \`echo no\`
+EOF" '$x `echo no`'
+run_test "here-document double-quoted delimiter stays literal" 'cat <<"EOF"
+$x
+EOF' '$x'
+run_test "here-document command substitution" 'cat <<EOF
+$(echo sub)
+EOF' "sub"
+run_test "here-document arithmetic expansion" 'cat <<EOF
+$((2 + 3))
+EOF' "5"
+run_test "here-document backslash escapes" 'cat <<EOF
+a\$b \\ c
+EOF' 'a$b \ c'
+run_test "here-document backslash newline joins lines" 'cat <<EOF
+one\
+two
+EOF' "onetwo"
+run_test "here-document preserves quotes" "cat <<EOF
+it's \"quoted\"
+EOF" 'it'"'"'s "quoted"'
+run_test "here-document feeds external command" 'wc -l <<EOF
+a
+b
+c
+EOF' "3"
+run_test "here-document with output redirection" 'cat <<EOF > "$TMP_FILE"
+redirected
+EOF
+cat "$TMP_FILE"' "redirected"
+run_test "here-document in pipeline" 'cat <<EOF | tr a-z A-Z
+pipe
+EOF' "PIPE"
+run_test "here-document to shell function" 'f() { cat; }; f <<EOF
+func
+EOF' "func"
+run_test "multiple here-documents on one line" 'cat <<A; cat <<B
+one
+A
+two
+B' "one
+two"
+run_test "here-document followed by another command" 'cat <<EOF
+body
+EOF
+echo after' "body
+after"
+run_test "here-string empty word" 'cat <<< ""' ""
+rm -f "$TMP_FILE"
+
 # 6. Pipelines
 run_test "two-stage pipeline" "echo -e 'banana\napple' | sort" "apple
 banana"
@@ -260,6 +322,20 @@ run_syntax_test "missing for variable" 'for ; do echo wrong; done' "expected for
 run_syntax_test "empty then body" 'if test 1 -eq 1; then fi' "expected a command in control structure"
 run_syntax_test "stray elif" 'elif test 1 -eq 1; then echo wrong; fi' "unexpected 'elif'"
 run_syntax_test "stray done" 'done' "unexpected 'done'"
+run_syntax_test "unterminated here-document" 'cat <<EOF
+oops' "unterminated here-document (wanted 'EOF')"
+run_syntax_test "here-document in compound command" 'if test 1 -eq 1; then cat <<EOF
+body
+EOF
+fi' "here-documents are not supported in compound commands"
+run_syntax_test "here-document in function body" 'f() { cat <<EOF
+body
+EOF
+}' "here-documents are not supported in compound commands"
+run_syntax_test "tab-stripping here-document unsupported" 'cat <<-EOF
+body
+EOF' "tab-stripping here-documents (<<-) are not supported"
+run_syntax_test "missing here-document delimiter" 'cat <<' "expected here-document delimiter"
 
 # 10. Functions and Aliases
 run_test "shell function" "greet() { echo \"Hello, \$1!\"; }; greet Gosh" "Hello, Gosh!"
@@ -405,6 +481,11 @@ printf -v word120 '%0120d' 0
 printf -v body508 'true %s;true %s;true %s;true %s;' "$word120" "$word120" "$word120" "$word120"
 run_test "512 byte function body" "f() { ${body508}true }" ""
 capacity_error "513 byte function body" "f() { ${body508}truex }" "compound text bytes" 512
+
+printf -v body513 'x%.0s' {1..513}
+capacity_error "here-document body bytes" "cat <<EOF
+$body513
+EOF" "here-document body bytes" 512
 
 printf -v spaces32768 '%32768s' ''
 printf '%s' "$spaces32768" > "$TMP_FILE"
