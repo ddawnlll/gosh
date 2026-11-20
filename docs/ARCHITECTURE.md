@@ -76,7 +76,7 @@ GOSH compiles directly into a standalone ELF binary via the Goose toolchain (`go
   - `$0`: Program name.
   - `$1`, `$2`, ...: Positional arguments (or function arguments).
   - `$PWD`, `$OLDPWD`, `$HOME`, `$USER`, `$HOSTNAME`.
-- **Arithmetic Expansion**: `$((expr))` evaluating `+`, `-`, `*`, `/`, `%`, and parentheses `( ... )`.
+- **Arithmetic Expansion**: `$((expr))` evaluated by a precedence-climbing parser (`arith_expr`/`arith_binary`/`arith_unary`/`arith_primary` in `expansion.goose`). It implements `?:`, `||`, `&&`, `|`, `^`, `&`, comparison, shift, additive, multiplicative, and unary operators over 64-bit two's-complement integers with documented wrapping, truncating division, masked shift counts, and non-evaluated ternary arms.
 - **Command Substitution**: `$(cmd)` and `` `cmd` `` executing arbitrary subshell pipelines and capturing stdout.
 - **Globbing**: `*` and `?` pattern expansion against the filesystem.
 - **Tilde Expansion**: `~` and `~/path` expanding to `$HOME`.
