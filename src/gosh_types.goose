@@ -34,6 +34,10 @@ let TOKEN_DO = 29;
 let TOKEN_DONE = 30;
 let TOKEN_FUNCTION = 31;
 
+// Redirection operators that provide stdin content rather than a path.
+let TOKEN_REDIR_HEREDOC = 34;   // <<EOF  (body collected during lexing)
+let TOKEN_REDIR_HERESTR = 35;   // <<< word
+
 struct Token {
     kind: i32 = 0,
     text: u8[..128] = [],
@@ -42,6 +46,17 @@ struct Token {
 struct Redirection {
     kind: i32 = 0,
     target: u8[..128] = [],
+    // Here-document payload, copied from the parse's Heredoc table. `quoted`
+    // records whether the delimiter was quoted, which disables expansion.
+    body: u8[..512] = [],
+    quoted: bool = false,
+}
+
+// A here-document body captured by the lexer. The parser copies each entry into
+// the Redirection that referenced it, so execution needs no side table.
+struct Heredoc {
+    body: u8[..512] = [],
+    quoted: bool = false,
 }
 
 struct Command {

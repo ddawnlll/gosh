@@ -68,7 +68,9 @@ inserted spaces and separators. Script files are limited to 32768 bytes.
 
 These checks apply to each parse, including recursively parsed bodies. A failure
 prevents execution of that parse; it does not roll back earlier recursive calls.
-Expansion output, alias reconstruction, interactive line editing, positional
+Here-document bodies are limited to 512 bytes with at most four per command
+line, and here-strings expand to the normal 128-byte word limit. Expansion
+output, alias reconstruction, interactive line editing, positional
 arguments supplied to GOSH itself, and shell state tables retain their existing
 fixed limits and are outside these lexer/parser checks.
 
